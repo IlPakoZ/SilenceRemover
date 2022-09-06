@@ -1,3 +1,3 @@
-# VocalRemover
+# SilenceRemover
 
-*VocalRemover* is a Python tool to remove silence from audio and video files.
+*SilenceRemover* is a Python tool to remove silence from audio and video files.
