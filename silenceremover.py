@@ -213,7 +213,10 @@ def _usage():
     print("\t                               .mp4, mkv, .mp3, .wav")
     print("\n")
     print("Options:")
-    print("\t-o, --output                   The output file name (without extension).")
+    print("\t-o, --output                   The output file name.")
+    print("\t                               The file name must be inserted without extension")
+    print("\t                               nor directory path. The file will be saved in the same")
+    print("\t                               directory of the input file.")
     print("\t                               The default value is '{input_file}_sr.mp4'.")
     print("\t-c, --compress                 If the input file is a video file, it compresses it")
     print("\t                               using x264 encoding. If the input is an audio file")
@@ -270,12 +273,16 @@ if __name__ == '__main__':
     for par in sys.argv[countOpts+1:]:
         if os.path.exists(par):
             file_name, file_extension = os.path.splitext(par)
+            new_out = output
+            if output:
+                new_out = os.path.dirname(par) + '\\' + output
+
             if file_extension.lower() in video_supp_exts:
                 # analyze_video
-                cut_video(file_name, file_extension, output_name=output, silence_threshold=threshold, compress=compress)
+                cut_video(file_name, file_extension, output_name=new_out+".mp4", silence_threshold=threshold, compress=compress)
             elif file_extension.lower() in audio_supp_exts:
                 # analyze_audio
-                cut_audio(file_name, file_extension, output_name=output, silence_threshold=threshold)
+                cut_audio(file_name, file_extension, output_name=new_out+".wav", silence_threshold=threshold)
             elif not file_extension:
                 print("Folder analysis is not yet implemented.")
                 sys.exit(NOT_IMPLEMENTED_EXIT_STATUS)
