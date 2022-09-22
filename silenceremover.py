@@ -8,6 +8,7 @@ import sys
 import getopt
 from scipy.io.wavfile import read, write
 from tqdm import tqdm
+from enum import Enum
 
 ####### GLOBAL DEFINITIONS, DO NOT EDIT! #######
 
@@ -29,6 +30,16 @@ GENERIC_EXCEPTION_STATUS = 103
 WINDOW_FACTOR = 80
 MARGIN = 30
 
+
+class CompressionAlgo(Enum):
+    LIGHT = 1
+    MID = 2
+    HEAVY = 3
+
+    @classmethod
+    def has_value(cls, value):
+        return value in cls._value2member_map_
+
 #################################################
 
 
@@ -48,46 +59,50 @@ def get_wav(name, ext):
 
 
 # Removes silence from a video file
-def cut_video(video_name, video_ext, output_name = None, silence_threshold = None, compress = False):
+def cut_video(video_name, video_ext, output_name=None, silence_threshold=None, compress=None):
     video = cv.VideoCapture(f"{video_name}{video_ext}")
 
     # Extract the audio from the video.
     get_wav(video_name, video_ext)
 
     if video.isOpened():
-        width = int(video.get(cv.CAP_PROP_FRAME_WIDTH))         # Frame width
-        height = int(video.get(cv.CAP_PROP_FRAME_HEIGHT))       # Frame height
-        frame_count = int(video.get(cv.CAP_PROP_FRAME_COUNT))   # Number of frames in the video
+        width = int(video.get(cv.CAP_PROP_FRAME_WIDTH))  # Frame width
+        height = int(video.get(cv.CAP_PROP_FRAME_HEIGHT))  # Frame height
+        frame_count = int(video.get(cv.CAP_PROP_FRAME_COUNT))  # Number of frames in the video
     else:
         print("Video streams closed unexpectedly. The program will be terminated.")
         return STREAM_CLOSED_UNEXPECTEDLY
 
     samplerate, data = read(f"{video_name}.wav")
-    duration = len(data)/samplerate
+    duration = len(data) / samplerate
     final_mask = get_edited_audio_matrix(data, samplerate, silence_threshold)
     final_audio = data[final_mask]
     # Duration of the video after the removal of silence
-    new_duration = len(final_audio)/samplerate
+    new_duration = len(final_audio) / samplerate
 
-    framerate = round(frame_count/duration)                     # Frame rate of the video
+    framerate = round(frame_count / duration)  # Frame rate of the video
 
     # To keep contains the indexes of the audio samples from the original audio data array to keep
     to_keep = np.where(final_mask == True)[0]
     # Group the samples to keep in arrays of the same or near-same length so that
     # there is a group for each frame that there will be in the final cut video.
-    subd = np.array_split(to_keep, math.ceil(new_duration*framerate))
+    subd = np.array_split(to_keep, math.ceil(new_duration * framerate))
 
     if not output_name:
         output_name = f"{video_name}_sr.mp4"
 
     temp_written_video = f"{video_name}_temp.mp4"
     temp_written_audio = f"{video_name}_temp.wav"
-    fourcc = cv.VideoWriter_fourcc(*'mp4v')
+
+    fourcc = -1
+
+    if compress == CompressionAlgo.MID:
+        fourcc = cv.VideoWriter_fourcc(*'mp4v')
+
     out = cv.VideoWriter(temp_written_video, fourcc, framerate, (width, height))
 
     expected_frame = 0
-    increment = samplerate/framerate
-    frame = None
+    increment = samplerate / framerate
 
     if video.isOpened() and out.isOpened():
         # Read the frames from the original video file and write on a new Stream
@@ -110,16 +125,16 @@ def cut_video(video_name, video_ext, output_name = None, silence_threshold = Non
 
     try:
         # Check if compression is requested and, eventually, execute it.
-        if not compress:
-            subprocess.check_call(
-                ['ffmpeg', '-i', temp_written_video, '-i', temp_written_audio, "-vcodec", "copy", output_name])
-        else:
+        if compress == CompressionAlgo.HEAVY:
             cp_st = time.time()
             subprocess.check_call(
-                ['ffmpeg', '-i', temp_written_video, '-i', temp_written_audio, '-c:v', 'libx264', "-crf", "20", "-c:a", "aac", "-b:a", "100k", output_name])
+                ['ffmpeg', '-i', temp_written_video, '-i', temp_written_audio, '-c:v', 'libx264', "-crf", "20", output_name])
 
             cp_et = time.time()
-            print(f"\nCompression and audio re-encoding completed in {cp_et - cp_st}s!")
+            print(f"\nCompression completed in {cp_et - cp_st}s!")
+        else:
+            subprocess.check_call(
+                ['ffmpeg', '-i', temp_written_video, '-i', temp_written_audio, "-vcodec", "copy", output_name])
 
     except subprocess.CalledProcessError:
         if os.path.exists(output_name):
@@ -141,8 +156,7 @@ def cut_video(video_name, video_ext, output_name = None, silence_threshold = Non
 # Returns an array of booleans 'final_mask' that indicates which audio samples
 # from the original audio file to keep (True) or to discard (False).
 def get_edited_audio_matrix(data, samplerate, silence_threshold):
-    channels = data.shape[1]
-
+    channels = len(data.shape)
     # If there are two channels, the mean of the values of the
     # two channels are used to calculate the silence threshold.
     if channels == 2:
@@ -151,11 +165,11 @@ def get_edited_audio_matrix(data, samplerate, silence_threshold):
         data_tmp = np.abs(data)
 
     if silence_threshold is None:
-        silence_threshold = np.mean(data_tmp)/3
+        silence_threshold = np.mean(data_tmp) / 3
 
     # The number of consecutive frames of value less than the silence threshold needed
     # for that section of the audio to be considered "silent".
-    consec_frames = samplerate//WINDOW_FACTOR
+    consec_frames = samplerate // WINDOW_FACTOR
     mask = np.abs(data_tmp) < silence_threshold
 
     # To check contains the indexes of the audio samples from the original audio data array to keep
@@ -168,7 +182,7 @@ def get_edited_audio_matrix(data, samplerate, silence_threshold):
         if ind - last_ind > consec_frames:
             # Do not keep those samples, except for the first 'MARGIN' and last 'MARGIN', to make
             # the transition from silence to sound less rough.
-            final_mask[last_ind+MARGIN:ind-MARGIN] = False
+            final_mask[last_ind + MARGIN:ind - MARGIN] = False
 
         # Update the last index
         last_ind = ind
@@ -177,7 +191,7 @@ def get_edited_audio_matrix(data, samplerate, silence_threshold):
 
 
 # Removes silence from an audio file
-def cut_audio(audio_name, audio_ext, output_name = None, silence_threshold = None):
+def cut_audio(audio_name, audio_ext, output_name=None, silence_threshold=None):
     # Convert the audio to .wav if needed.
     if audio_ext != ".wav":
         get_wav(audio_name, audio_ext)
@@ -216,11 +230,13 @@ def _usage():
     print("\t                               nor directory path. The file will be saved in the same")
     print("\t                               directory of the input file.")
     print("\t                               The default value is '{input_file}_sr.mp4'.")
-    print("\t-c, --compress                 If the input file is a video file, it compresses it")
-    print("\t                               using x264 encoding. If the input is an audio file")
-    print("\t                               this flag is ignored.")
-    print("\t                               Compression may decrease the output file size")
-    print("\t                               in exchange of time efficiency, which is significantly reduced.")
+    print("\t-c, --compress                 If the input file is a video file, you can select a compression")
+    print("\t                               algorithm to make it smaller. The accepted value is a value")
+    print("\t                               from 1 to 3. The highest the number, the smaller the final file,")
+    print("\t                               but the more time it will take for the script to complete.")
+    print("\t                               If a value not in the specified range is selected, the default")
+    print("\t                               value will be used.")
+    print("\t                               The default value is '1'.")
     print("\t-t, --threshold                Allows the user to specify a silence threshold manually")
     print("\t                               which is the values below which a sound is considered silence.")
     print("\t                               The default value is calculated by taking the mean of the absolute")
@@ -232,7 +248,7 @@ def _usage():
 
 if __name__ == '__main__':
     try:
-        opts, args = getopt.getopt(sys.argv[1:], "ho:ct:", ["help", "output=", "compress", "threshold"])
+        opts, args = getopt.getopt(sys.argv[1:], "ho:c:t:l", ["help", "output=", "compress=", "threshold="])
     except getopt.GetoptError as err:
         # Print error and exit
         print(err)
@@ -241,7 +257,7 @@ if __name__ == '__main__':
 
     threshold = None
     output = None
-    compress = False
+    compress = CompressionAlgo(1)
     countOpts = 0
     for o, a in opts:
         if o in ("-h", "--help"):
@@ -249,26 +265,33 @@ if __name__ == '__main__':
             sys.exit()
         elif o in ("-o", "--output"):
             output = a
-            countOpts += 2
         elif o in ("-c", "--compress"):
-            compress = True
-            countOpts += 1
+            if str.isdigit(a):
+                compress = int(a)
+                if CompressionAlgo.has_value(compress):
+                    compress = CompressionAlgo(compress)
         elif o in ("-t", "--threshold"):
             try:
                 threshold = float(a)
-                countOpts += 2
             except ValueError:
                 print(f"Argument {a} for threshold is not a valid float.")
                 sys.exit(INVALID_OPTION_TYPE)
+        elif o in "-l":
+            pass
         else:
             sys.exit(3)
 
-    if len(sys.argv[countOpts+1:]) > 1:
+        countOpts += 1
+
+        if o[1] != "-" and not a:
+            countOpts += 1
+
+    if len(sys.argv[countOpts + 1:]) > 1:
         if output:
             print("Output option can be used when the input file is just one.")
             sys.exit(OUTPUT_NOT_COMPATIBLE_EXIT_STATUS)
 
-    for par in sys.argv[countOpts+1:]:
+    for par in sys.argv[countOpts + 1:]:
         if os.path.exists(par):
             file_name, file_extension = os.path.splitext(par)
             new_out = output
@@ -277,7 +300,8 @@ if __name__ == '__main__':
 
             if file_extension.lower() in video_supp_exts:
                 # Analyze video
-                cut_video(file_name, file_extension, output_name=new_out, silence_threshold=threshold, compress=compress)
+                cut_video(file_name, file_extension, output_name=new_out, silence_threshold=threshold,
+                          compress=compress)
             elif file_extension.lower() in audio_supp_exts:
                 # Analyze audio
                 cut_audio(file_name, file_extension, output_name=new_out, silence_threshold=threshold)

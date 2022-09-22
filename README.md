@@ -5,6 +5,8 @@ To see the available options, download silenceremover.py and run the command ```
 
 ## Requirements
 
+You need to have the ffmpeg package installed on the system for the script to work.
+
 Until a more time and memory efficient algorithm is developed, it is strongly recommended to not cut files longer than 2 hours.<br/>
 
 This script saves temporary files on your disk, so make sure it has the right permissions to do so. For the same reason, a bit of disk space
