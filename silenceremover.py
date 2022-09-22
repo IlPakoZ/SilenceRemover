@@ -26,8 +26,8 @@ TEMP_FILE_ALREADY_EXISTS_STATUS = 101
 STREAM_CLOSED_UNEXPECTEDLY = 102
 GENERIC_EXCEPTION_STATUS = 103
 
-WINDOW_FACTOR = 100
-MARGIN = 20
+WINDOW_FACTOR = 80
+MARGIN = 30
 
 #################################################
 
@@ -58,8 +58,6 @@ def cut_video(video_name, video_ext, output_name = None, silence_threshold = Non
         width = int(video.get(cv.CAP_PROP_FRAME_WIDTH))         # Frame width
         height = int(video.get(cv.CAP_PROP_FRAME_HEIGHT))       # Frame height
         frame_count = int(video.get(cv.CAP_PROP_FRAME_COUNT))   # Number of frames in the video
-        video.set(cv.CAP_PROP_POS_FRAMES, frame_count)
-        video.set(cv.CAP_PROP_POS_FRAMES, 0)
     else:
         print("Video streams closed unexpectedly. The program will be terminated.")
         return STREAM_CLOSED_UNEXPECTEDLY
@@ -275,14 +273,14 @@ if __name__ == '__main__':
             file_name, file_extension = os.path.splitext(par)
             new_out = output
             if output:
-                new_out = os.path.dirname(par) + '\\' + output
+                new_out = os.path.dirname(par) + '\\' + output + file_extension
 
             if file_extension.lower() in video_supp_exts:
-                # analyze_video
-                cut_video(file_name, file_extension, output_name=new_out+".mp4", silence_threshold=threshold, compress=compress)
+                # Analyze video
+                cut_video(file_name, file_extension, output_name=new_out, silence_threshold=threshold, compress=compress)
             elif file_extension.lower() in audio_supp_exts:
-                # analyze_audio
-                cut_audio(file_name, file_extension, output_name=new_out+".wav", silence_threshold=threshold)
+                # Analyze audio
+                cut_audio(file_name, file_extension, output_name=new_out, silence_threshold=threshold)
             elif not file_extension:
                 print("Folder analysis is not yet implemented.")
                 sys.exit(NOT_IMPLEMENTED_EXIT_STATUS)
