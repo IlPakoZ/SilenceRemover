@@ -27,14 +27,25 @@ TEMP_FILE_ALREADY_EXISTS_STATUS = 101
 STREAM_CLOSED_UNEXPECTEDLY = 102
 GENERIC_EXCEPTION_STATUS = 103
 
-WINDOW_FACTOR = 80
-MARGIN = 30
+WINDOW_FACTOR = 10
+MARGIN = 60
 
 
 class CompressionAlgo(Enum):
     LIGHT = 1
     MID = 2
     HEAVY = 3
+
+    @classmethod
+    def has_value(cls, value):
+        return value in cls._value2member_map_
+
+
+class ThresholdAlgo(Enum):
+    SENSITIVE = 1
+    WEAK = 2
+    MODERATE = 3
+    STRONG = 4
 
     @classmethod
     def has_value(cls, value):
@@ -59,7 +70,7 @@ def get_wav(name, ext):
 
 
 # Removes silence from a video file
-def cut_video(video_name, video_ext, output_name=None, silence_threshold=None, compress=None):
+def cut_video(video_name, video_ext, output_name=None, method=ThresholdAlgo.MODERATE, compress=None):
     video = cv.VideoCapture(f"{video_name}{video_ext}")
 
     # Extract the audio from the video.
@@ -75,7 +86,7 @@ def cut_video(video_name, video_ext, output_name=None, silence_threshold=None, c
 
     samplerate, data = read(f"{video_name}.wav")
     duration = len(data) / samplerate
-    final_mask = get_edited_audio_matrix(data, samplerate, silence_threshold)
+    final_mask = get_edited_audio_matrix(data, samplerate, method)
     final_audio = data[final_mask]
     # Duration of the video after the removal of silence
     new_duration = len(final_audio) / samplerate
@@ -104,6 +115,7 @@ def cut_video(video_name, video_ext, output_name=None, silence_threshold=None, c
     expected_frame = 0
     increment = samplerate / framerate
 
+    print("Processing video file...", flush=True)
     if video.isOpened() and out.isOpened():
         # Read the frames from the original video file and write on a new Stream
         # the frames that the first audio sample of each group points to.
@@ -155,7 +167,7 @@ def cut_video(video_name, video_ext, output_name=None, silence_threshold=None, c
 
 # Returns an array of booleans 'final_mask' that indicates which audio samples
 # from the original audio file to keep (True) or to discard (False).
-def get_edited_audio_matrix(data, samplerate, silence_threshold):
+def get_edited_audio_matrix(data, samplerate, method=ThresholdAlgo.MODERATE):
     channels = len(data.shape)
     # If there are two channels, the mean of the values of the
     # two channels are used to calculate the silence threshold.
@@ -164,8 +176,20 @@ def get_edited_audio_matrix(data, samplerate, silence_threshold):
     else:
         data_tmp = np.abs(data)
 
-    if silence_threshold is None:
-        silence_threshold = np.mean(data_tmp) / 3
+    if method == ThresholdAlgo.SENSITIVE:
+        first_threshold = np.mean(data_tmp)
+        mask1 = np.abs(data_tmp) < first_threshold
+        data_mask = data_tmp[mask1]
+        silence_threshold = (np.mean(data_mask)) * 2
+    elif method == ThresholdAlgo.WEAK:
+        silence_threshold = np.mean(data_tmp) / 2
+    elif method == ThresholdAlgo.MODERATE:
+        first_threshold = np.mean(data_tmp)
+        mask1 = np.abs(data_tmp) < first_threshold
+        data_mask = data_tmp[mask1]
+        silence_threshold = (np.mean(data_mask)+first_threshold) / 2
+    elif method == ThresholdAlgo.STRONG:
+        silence_threshold = np.mean(data_tmp)
 
     # The number of consecutive frames of value less than the silence threshold needed
     # for that section of the audio to be considered "silent".
@@ -177,6 +201,7 @@ def get_edited_audio_matrix(data, samplerate, silence_threshold):
     final_mask = np.ones(mask.shape, dtype=bool)
 
     last_ind = 0
+    print("Cutting audio file...", flush=True)
     for ind in tqdm(to_check):
         # If the number of consecutive silenced frames is greater than 'consec_frames'...
         if ind - last_ind > consec_frames:
@@ -191,14 +216,14 @@ def get_edited_audio_matrix(data, samplerate, silence_threshold):
 
 
 # Removes silence from an audio file
-def cut_audio(audio_name, audio_ext, output_name=None, silence_threshold=None):
+def cut_audio(audio_name, audio_ext, output_name=None, method=ThresholdAlgo.MODERATE):
     # Convert the audio to .wav if needed.
     if audio_ext != ".wav":
         get_wav(audio_name, audio_ext)
 
     # Gets the sample rate of the audio file and an array containing the audio samples.
     samplerate, data = read(f"{audio_name}.wav")
-    final_mask = get_edited_audio_matrix(data, samplerate, silence_threshold)
+    final_mask = get_edited_audio_matrix(data, samplerate, method=ThresholdAlgo.MODERATE)
 
     if not output_name:
         output_name = f"{audio_name}_sr{audio_ext}"
@@ -234,31 +259,39 @@ def _usage():
     print("\t                               algorithm to make it smaller. The accepted value is a value")
     print("\t                               from 1 to 3. The highest the number, the smaller the final file,")
     print("\t                               but the more time it will take for the script to complete.")
-    print("\t                               If a value not in the specified range is selected, the default")
+    print("\t                               If a value not in the specified range is inserted, the default")
     print("\t                               value will be used.")
-    print("\t                               The default value is '1'.")
-    print("\t-t, --threshold                Allows the user to specify a silence threshold manually")
-    print("\t                               which is the values below which a sound is considered silence.")
-    print("\t                               The default value is calculated by taking the mean of the absolute")
-    print("\t                               values of the values read by scipy and divides the result by")
-    print("\t                               a constant factor. Using this option is not recommended given")
-    print("\t                               the high variability of the value between files.")
+    print("\t                               The default value is '2'.")
+    print("\t-m, --method                   The threshold algorithm used to calculate the silence threshold.")
+    print("\t                               The silence threshold is the amplitude value under which a sample")
+    print("\t                               is detected as silent. This value is automatically calculated")
+    print("\t                               by the script based on the audio track of the input and the algorithm")
+    print("\t                               selected. There are four algorithms that can be used to calculate")
+    print("\t                               this value. The lowest the value, the more probable it is to")
+    print("\t                               capture quiet noises or voices in the background.")
+    print("\t                               To capture quiet voices in the background, a lower value")
+    print("\t                               is recommended. Otherwise, a higher value is recommended.")
+    print("\t                               If a value not in the specified range is inserted, the default")
+    print("\t                               value will be used.")
+    print("\t                               The default value is '3'.")
     print("\t-h, --help                     Show this help screen.")
 
 
-if __name__ == '__main__':
+# Main method, reads the arguments/options and prepares the program
+def main():
     try:
-        opts, args = getopt.getopt(sys.argv[1:], "ho:c:t:l", ["help", "output=", "compress=", "threshold="])
+        opts, args = getopt.getopt(sys.argv[1:], "ho:c:m:", ["help", "output=", "compress=", "method="])
     except getopt.GetoptError as err:
         # Print error and exit
         print(err)
         _usage()
         sys.exit(INVALID_OPTION_EXIT_STATUS)
 
-    threshold = None
     output = None
-    compress = CompressionAlgo(1)
+    method = ThresholdAlgo(3)
+    compress = CompressionAlgo(2)
     countOpts = 0
+
     for o, a in opts:
         if o in ("-h", "--help"):
             _usage()
@@ -270,14 +303,11 @@ if __name__ == '__main__':
                 compress = int(a)
                 if CompressionAlgo.has_value(compress):
                     compress = CompressionAlgo(compress)
-        elif o in ("-t", "--threshold"):
-            try:
-                threshold = float(a)
-            except ValueError:
-                print(f"Argument {a} for threshold is not a valid float.")
-                sys.exit(INVALID_OPTION_TYPE)
-        elif o in "-l":
-            pass
+        elif o in ("-m", "--method"):
+            if str.isdigit(a):
+                method = int(a)
+                if ThresholdAlgo.has_value(method):
+                    method = ThresholdAlgo(method)
         else:
             sys.exit(3)
 
@@ -300,11 +330,11 @@ if __name__ == '__main__':
 
             if file_extension.lower() in video_supp_exts:
                 # Analyze video
-                cut_video(file_name, file_extension, output_name=new_out, silence_threshold=threshold,
+                cut_video(file_name, file_extension, output_name=new_out, method=method,
                           compress=compress)
             elif file_extension.lower() in audio_supp_exts:
                 # Analyze audio
-                cut_audio(file_name, file_extension, output_name=new_out, silence_threshold=threshold)
+                cut_audio(file_name, file_extension, output_name=new_out, method=method)
             elif not file_extension:
                 print("Folder analysis is not yet implemented.")
                 sys.exit(NOT_IMPLEMENTED_EXIT_STATUS)
@@ -314,3 +344,7 @@ if __name__ == '__main__':
         else:
             print(f"The path {par} doesn't exists.")
             sys.exit(PATH_NOT_EXISTS_STATUS)
+
+
+if __name__ == '__main__':
+    main()
