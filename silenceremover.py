@@ -1,6 +1,5 @@
 import numpy as np
 import time
-import math
 import os
 import subprocess
 import cv2 as cv
@@ -9,6 +8,7 @@ import getopt
 from scipy.io.wavfile import read, write
 from tqdm import tqdm
 from enum import Enum
+import decimal
 
 ####### GLOBAL DEFINITIONS, DO NOT EDIT! #######
 
@@ -27,8 +27,8 @@ TEMP_FILE_ALREADY_EXISTS_STATUS = 101
 STREAM_CLOSED_UNEXPECTEDLY = 102
 GENERIC_EXCEPTION_STATUS = 103
 
-WINDOW_FACTOR = 10
-MARGIN = 60
+WINDOW_FACTOR = 5
+MARGIN = 100
 
 
 class CompressionAlgo(Enum):
@@ -85,19 +85,15 @@ def cut_video(video_name, video_ext, output_name=None, method=ThresholdAlgo.MODE
         return STREAM_CLOSED_UNEXPECTEDLY
 
     samplerate, data = read(f"{video_name}.wav")
-    duration = len(data) / samplerate
+    duration = decimal.Decimal(len(data)) / samplerate
     final_mask = get_edited_audio_matrix(data, samplerate, method)
     final_audio = data[final_mask]
     # Duration of the video after the removal of silence
-    new_duration = len(final_audio) / samplerate
-
-    framerate = round(frame_count / duration)  # Frame rate of the video
+    new_duration = decimal.Decimal(len(final_audio)) / samplerate
+    framerate = decimal.Decimal(frame_count) / duration  # Frame rate of the video
 
     # To keep contains the indexes of the audio samples from the original audio data array to keep
     to_keep = np.where(final_mask == True)[0]
-    # Group the samples to keep in arrays of the same or near-same length so that
-    # there is a group for each frame that there will be in the final cut video.
-    subd = np.array_split(to_keep, math.ceil(new_duration * framerate))
 
     if not output_name:
         output_name = f"{video_name}_sr.mp4"
@@ -110,8 +106,7 @@ def cut_video(video_name, video_ext, output_name=None, method=ThresholdAlgo.MODE
     if compress == CompressionAlgo.MID:
         fourcc = cv.VideoWriter_fourcc(*'mp4v')
 
-    out = cv.VideoWriter(temp_written_video, fourcc, framerate, (width, height))
-
+    out = cv.VideoWriter(temp_written_video, fourcc, frame_count/float(duration), (width, height))
     expected_frame = 0
     increment = samplerate / framerate
 
@@ -119,8 +114,8 @@ def cut_video(video_name, video_ext, output_name=None, method=ThresholdAlgo.MODE
     if video.isOpened() and out.isOpened():
         # Read the frames from the original video file and write on a new Stream
         # the frames that the first audio sample of each group points to.
-        for group in tqdm(subd):
-            while group[0] >= int(expected_frame):
+        for index in tqdm(np.arange(0, len(to_keep), increment)):
+            while to_keep[int(index)] >= expected_frame:
                 _ = video.grab()
                 expected_frame += increment
 
@@ -199,7 +194,6 @@ def get_edited_audio_matrix(data, samplerate, method=ThresholdAlgo.MODERATE):
     # To check contains the indexes of the audio samples from the original audio data array to keep
     to_check = np.where(mask == False)[0]
     final_mask = np.ones(mask.shape, dtype=bool)
-
     last_ind = 0
     print("Cutting audio file...", flush=True)
     for ind in tqdm(to_check):
@@ -261,6 +255,10 @@ def _usage():
     print("\t                               but the more time it will take for the script to complete.")
     print("\t                               If a value not in the specified range is inserted, the default")
     print("\t                               value will be used.")
+    print("\t                               WARNING: some video files may benefit better size loss with")
+    print("\t                               method 1 than method 2. This depends by the specific compression")
+    print("\t                               mechanisms of each algorithm: keep in mind that those numbers are")
+    print("\t                               only indicative and results may vary.")
     print("\t                               The default value is '2'.")
     print("\t-m, --method                   The threshold algorithm used to calculate the silence threshold.")
     print("\t                               The silence threshold is the amplitude value under which a sample")
@@ -273,7 +271,7 @@ def _usage():
     print("\t                               is recommended. Otherwise, a higher value is recommended.")
     print("\t                               If a value not in the specified range is inserted, the default")
     print("\t                               value will be used.")
-    print("\t                               The default value is '3'.")
+    print("\t                               The default value is '2'.")
     print("\t-h, --help                     Show this help screen.")
 
 
@@ -288,7 +286,7 @@ def main():
         sys.exit(INVALID_OPTION_EXIT_STATUS)
 
     output = None
-    method = ThresholdAlgo(3)
+    method = ThresholdAlgo(2)
     compress = CompressionAlgo(2)
     countOpts = 0
 
